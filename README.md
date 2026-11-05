@@ -21,7 +21,11 @@ Ways to get files in: drag onto the window, drop on Kiln in the Dock, **Choose F
 When it's done, drag a result straight into Messages, WhatsApp or Mail, or press **Copy** and paste it there.
 If you switch away during a long video, the Dock icon bounces when it finishes.
 
-To get a newer version later: **Kiln menu > Check for Updates...** It only looks at this page, and only when you ask.
+If she picks the wrong thing on a long video, **Stop** halts it. Kiln remembers the last format and size she chose.
+
+New versions: about once a week Kiln quietly asks this GitHub page whether there's a newer release, and if so shows a
+small "A new Kiln is ready" bar with a Download button. Nothing else is sent. **Kiln menu > Check for Updates...**
+checks straight away.
 
 ## Install
 

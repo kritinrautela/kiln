@@ -248,6 +248,29 @@ struct EngineTests {
         let leftovers = ((try? fm.contentsOfDirectory(atPath: s.dir.path)) ?? []).filter { $0.hasPrefix("broken (") || $0.hasPrefix("empty (") }
         check(leftovers.isEmpty, "failed jobs leave no half-made files behind \(leftovers)")
 
+        print("\nstop and drops")
+        let before = Set((try? fm.contentsOfDirectory(atPath: s.dir.path)) ?? [])
+        let t = Task { try await Engine.run(.smaller, file: DroppedFile(url: s.mov), format: nil, size: .tiny,
+                                            options: .init(), location: .beside) }
+        t.cancel()
+        let stopped = await t.result
+        let after = Set((try? fm.contentsOfDirectory(atPath: s.dir.path)) ?? [])
+        if case .failure = stopped {
+            check(after.subtracting(before).isEmpty, "Stop leaves no half-made video behind \(after.subtracting(before))")
+        } else {
+            check(after.subtracting(before).count == 1, "Stop arrived after the video finished: one whole file")
+        }
+        await MainActor.run {
+            let store = Store()
+            store.add([s.jpg])
+            store.working = true
+            store.results = [Result(url: s.jpg, before: 1, after: 1)]
+            store.add([s.heic])
+            check(store.files.count == 2 && store.results.count == 1, "files dropped mid-job join the list without wiping results")
+            store.add([s.heic])
+            check(store.files.count == 2, "the same file dropped twice is listed once")
+        }
+
         print("\nnaming")
         let photo = s.dir.appendingPathComponent("x.heic")
         check(Output.url(beside: photo, suffix: "smaller", ext: "jpg", location: .beside).lastPathComponent == "x (smaller).jpg",

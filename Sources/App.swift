@@ -45,6 +45,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.servicesProvider = self   // Finder: right-click > Quick Actions / Services > Open in Kiln
         NSUpdateDynamicServices()
+        Task { @MainActor in Updates.checkQuietly() }
+    }
+
+    /// Closing the window mid-job would quietly throw the work away, so ask first.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard MainActor.assumeIsolated({ Store.shared.working }) else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = "Kiln is still working"
+        alert.informativeText = "If you quit now, the file it's working on won't be finished."
+        alert.addButton(withTitle: "Keep Working")
+        alert.addButton(withTitle: "Quit Anyway")
+        return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
     }
 
     /// The "Open in Kiln" service.
@@ -158,16 +170,35 @@ enum Updates {
         return false
     }
 
+    static func latest() async throws -> String {
+        var req = URLRequest(url: api, timeoutInterval: 15)
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let (data, _) = try await URLSession.shared.data(for: req)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let tag = json?["tag_name"] as? String else { throw KilnError("No release found.") }
+        return tag
+    }
+
+    /// Once a week at most, on launch: if there's a newer Kiln, show a small banner. Silent on any error.
+    @MainActor
+    static func checkQuietly() {
+        let last = UserDefaults.standard.double(forKey: "lastUpdateCheck")
+        guard Date().timeIntervalSince1970 - last > 7 * 24 * 3600 else { return }
+        Task {
+            guard let tag = try? await latest() else { return }
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastUpdateCheck")
+            if isNewer(tag, than: current) {
+                Store.shared.newVersion = tag.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
+            }
+        }
+    }
+
     @MainActor
     static func check() {
         Task {
-            var req = URLRequest(url: api, timeoutInterval: 15)
-            req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             let alert = NSAlert()
             do {
-                let (data, _) = try await URLSession.shared.data(for: req)
-                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                guard let tag = json?["tag_name"] as? String else { throw KilnError("No release found.") }
+                let tag = try await latest()
                 if isNewer(tag, than: current) {
                     alert.messageText = "A new Kiln is ready"
                     alert.informativeText = "You have \(current). Version \(tag.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))) is out. Download it, then drag the new Kiln into Applications to replace this one."

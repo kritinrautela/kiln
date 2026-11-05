@@ -207,6 +207,8 @@ final class Store {
     var working = false
     var progress = 0.0
     var status = ""
+    var newVersion: String?          // set by the weekly update check
+    private var job: Task<Void, Never>?
     var pendingCrop: [DroppedFile] = []
     var pendingTrim: [DroppedFile] = []
 
@@ -244,8 +246,10 @@ final class Store {
                 seen.insert(url)
             }
         }
-        results = []
-        failures = []
+        if !working {   // a drop mid-job joins the list but must not wipe results still coming in
+            results = []
+            failures = []
+        }
     }
 
     func remove(_ file: DroppedFile) { files.removeAll { $0.id == file.id } }
@@ -311,7 +315,7 @@ final class Store {
         results = []
         failures = []
         let location = saveLocation
-        Task {
+        job = Task {
             if action == .combine {
                 status = "Combining \(targets.count) files…"
                 await record(targets.first!, location: location) { out in
@@ -320,6 +324,7 @@ final class Store {
                 progress = 1
             } else {
                 for (i, f) in targets.enumerated() {
+                    if Task.isCancelled { break }
                     status = "\(action.title): \(f.name)"
                     await perform(action, on: f, format: formats[f.kind], size: size, options: options[f.id] ?? JobOptions(scale: scale),
                                   location: location)
@@ -327,10 +332,18 @@ final class Store {
                 }
             }
             working = false
+            job = nil
+            if Task.isCancelled {
+                status = "Stopped"
+                return
+            }
             if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }   // bounce the Dock icon
             status = failures.isEmpty ? "Done" : "Done, with \(failures.count) problem\(failures.count == 1 ? "" : "s")"
         }
     }
+
+    /// Stops after the file being worked on (a video export stops straight away).
+    func stop() { job?.cancel() }
 
     private func perform(_ action: Action, on f: DroppedFile, format: Format?, size: Size, options: JobOptions,
                          location: SaveLocation) async {
@@ -342,6 +355,7 @@ final class Store {
                 results.append(Result(url: p.url, before: f.size, after: after, text: p.text, saving: action == .smaller))
             }
         } catch {
+            if Task.isCancelled || error is CancellationError { return }
             failures.append(Failure(name: f.name, reason: error.localizedDescription))
         }
     }

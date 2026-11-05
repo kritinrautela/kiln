@@ -18,6 +18,20 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 540, minHeight: 600)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let v = store.newVersion {
+                HStack(spacing: 10) {
+                    Image(systemName: "sparkles").foregroundStyle(Color.ember)
+                    Text("A new Kiln (\(v)) is ready.").font(.callout.weight(.medium))
+                    Spacer()
+                    Button("Download") { NSWorkspace.shared.open(Updates.page) }
+                    Button("Later") { store.newVersion = nil }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+                .background(.bar)
+            }
+        }
         .onDrop(of: Drops.types, isTargeted: $targeted) { providers in
             Drops.load(providers, into: store)
             return true
@@ -247,8 +261,8 @@ struct ActionsView: View {
     let trim: () -> Void
     @State private var open: Action?
     @State private var formats: [FileKind: Format] = [:]
-    @State private var size: Size = .email
-    @State private var scale = 0.5
+    @AppStorage("size") private var size: Size = .email          // remembered between uses
+    @AppStorage("scale") private var scale = 0.5
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -287,10 +301,16 @@ struct ActionsView: View {
         .onChange(of: store.files) { defaultFormats() }
     }
 
+    /// Last time's choice for each kind of file, or the first one.
     private func defaultFormats() {
         for k in store.kinds where formats[k] == nil || !Format.choices(for: k).contains(formats[k]!) {
-            formats[k] = Format.choices(for: k).first
+            let saved = UserDefaults.standard.string(forKey: "format.\(k.rawValue)")
+            formats[k] = Format.choices(for: k).first { $0.ext == saved } ?? Format.choices(for: k).first
         }
+    }
+
+    private func remember() {
+        for (k, f) in formats { UserDefaults.standard.set(f.ext, forKey: "format.\(k.rawValue)") }
     }
 
     private var expandable: Set<Action> { [.convert, .smaller, .resize] }
@@ -362,7 +382,10 @@ struct ActionsView: View {
                     .fixedSize()
                 }
             }
-            Button("Convert") { store.run(.convert, formats: formats) }
+            Button("Convert") {
+                remember()
+                store.run(.convert, formats: formats)
+            }
                 .buttonStyle(.glassProminent)
         }
     }
@@ -425,7 +448,10 @@ struct ResultsView: View {
             if store.working {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Working…").font(.title2.weight(.semibold))
-                    ProgressView(value: store.progress)
+                    HStack(spacing: 12) {
+                        ProgressView(value: store.progress)
+                        Button("Stop") { store.stop() }
+                    }
                     Text(store.status).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
             } else {
@@ -433,7 +459,7 @@ struct ResultsView: View {
                     Image(systemName: store.failures.isEmpty ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                         .font(.title)
                         .foregroundStyle(store.failures.isEmpty ? Color.green : Color.orange)
-                    Text(store.failures.isEmpty ? "Done" : store.results.isEmpty ? "That didn't work" : "Done, mostly")
+                    Text(store.status == "Stopped" ? "Stopped" : store.failures.isEmpty ? "Done" : store.results.isEmpty ? "That didn't work" : "Done, mostly")
                         .font(.title2.weight(.semibold))
                     Spacer()
                     if store.results.count > 1 {
@@ -488,6 +514,11 @@ struct ResultsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(r.url.lastPathComponent).font(.body.weight(.medium)).lineLimit(1).truncationMode(.middle)
                 Text(sizeLine(r)).font(.callout).foregroundStyle(.secondary).monospacedDigit()
+                if r.after > 25_000_000 {
+                    Text("Too big for most email. Try Make smaller, or send it with AirDrop.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
             Spacer()
             if let text = r.text {
